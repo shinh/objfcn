@@ -12,6 +12,8 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#define SPLIT_ALLOC 1
+
 #if defined(__x86_64__)
 # define R_64 R_X86_64_64
 # define R_PC32 R_X86_64_PC32
@@ -50,9 +52,23 @@ typedef struct {
 typedef struct {
   symbol* symbols;
   int num_symbols;
+  char* code;
+  size_t code_size;
+  size_t code_used;
 } obj_handle;
 
 static char obj_error[256];
+
+#if SPLIT_ALLOC
+
+static char* alloc_code(obj_handle* obj, size_t size) {
+  char* r = obj->code + obj->code_used;
+  obj->code_used += size;
+  return r;
+}
+
+#else
+
 static char* code;
 static size_t code_used;
 
@@ -71,6 +87,8 @@ static void init(void) {
     sprintf(obj_error, "mmap failed");
   }
 }
+
+#endif
 
 char* read_file(const char* filename) {
   FILE* fp = NULL;
@@ -118,12 +136,14 @@ void* objopen(const char* filename, int flags) {
   obj_handle* obj = NULL;
   Elf_Ehdr* ehdr = NULL;
 
+#if !SPLIT_ALLOC
   if (!code) {
     init();
   }
   if (code == MAP_FAILED) {
     return NULL;
   }
+#endif
 
   bin = read_file(filename);
   if (bin == NULL) {
@@ -169,6 +189,27 @@ void* objopen(const char* filename, int flags) {
       strtab = bin + shdr->sh_offset;
     }
   }
+
+#if SPLIT_ALLOC
+  size_t code_size = 0;
+  for (int i = 0; i < ehdr->e_shnum; i++) {
+    Elf_Shdr* shdr = &shdrs[i];
+    if (shdr->sh_flags & SHF_ALLOC) {
+      code_size += shdr->sh_size;
+    }
+  }
+  obj->code_size = (code_size + 4095) & ~4095;
+  obj->code = (char*)mmap(NULL, obj->code_size,
+                          PROT_READ | PROT_WRITE | PROT_EXEC,
+                          MAP_PRIVATE | MAP_ANONYMOUS,
+                          -1, 0);
+  if (obj->code == MAP_FAILED) {
+    sprintf(obj_error, "mmap failed: %s", strerror(errno));
+    free(bin);
+    free(obj);
+    return NULL;
+  }
+#endif
 
   memset(addrs, 0, sizeof(addrs));
   for (int i = 0; i < ehdr->e_shnum; i++) {
@@ -310,8 +351,10 @@ void* objopen(const char* filename, int flags) {
 }
 
 int objclose(void* handle) {
-  // TODO: reclaim code.
   obj_handle* obj = (obj_handle*)handle;
+  if (obj->code) {
+    munmap(obj->code, obj->code_size);
+  }
   for (int i = 0; i < obj->num_symbols; i++) {
     free(obj->symbols[i].name);
   }
