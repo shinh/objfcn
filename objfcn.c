@@ -56,6 +56,12 @@ static char obj_error[256];
 static char* code;
 static size_t code_used;
 
+static char* alloc_code(obj_handle* obj, size_t size) {
+  char* r = code + code_used;
+  code_used += size;
+  return r;
+}
+
 static void init(void) {
   code = (char*)mmap(NULL, 1024 * 1024 * 1024,
                      PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -168,11 +174,10 @@ void* objopen(const char* filename, int flags) {
   for (int i = 0; i < ehdr->e_shnum; i++) {
     Elf_Shdr* shdr = &shdrs[i];
     if (shdr->sh_flags & SHF_ALLOC) {
-      addrs[i] = code + code_used;
+      addrs[i] = alloc_code(obj, shdr->sh_size);
       if (shdr->sh_type != SHT_NOBITS) {
-        memcpy(code + code_used, bin + shdr->sh_offset, shdr->sh_size);
+        memcpy(addrs[i], bin + shdr->sh_offset, shdr->sh_size);
       }
-      code_used += shdr->sh_size;
     }
   }
 
@@ -267,13 +272,12 @@ void* objopen(const char* filename, int flags) {
 #ifdef R_PLT32
         case R_PLT32: {
           void* dest = sym_addr;
-          sym_addr = code + code_used;
 #if defined(__x86_64__)
+          sym_addr = alloc_code(obj, 6 + 8);
           sym_addr[0] = 0xff;
           sym_addr[1] = 0x25;
           *(uint32_t*)(sym_addr + 2) = 0;
           *(uint64_t*)(sym_addr + 6) = (uint64_t)dest;
-          code_used += 6 + 8;
 #endif
           *(uint32_t*)target = (sym_addr - target) + addend;
           break;
@@ -283,9 +287,8 @@ void* objopen(const char* filename, int flags) {
 #if defined(__x86_64__)
         case R_X86_64_REX_GOTPCRELX: {
           void* dest = sym_addr;
-          sym_addr = code + code_used;
+          sym_addr = alloc_code(obj, 8);
           *(uint64_t*)(sym_addr) = (uint64_t)dest;
-          code_used += 8;
           *(uint32_t*)target = (sym_addr - target) + addend;
           break;
         }
