@@ -14,7 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define OBJFCN_LOG 1
+#define OBJFCN_LOG 0
 
 #define OBJFCN_SPLIT_ALLOC 1
 
@@ -195,36 +195,78 @@ void* objopen(const char* filename, int flags) {
   }
 
 #if OBJFCN_SPLIT_ALLOC
-  obj->code_size = 0;
-  for (int i = 0; i < ehdr->e_shnum; i++) {
-    Elf_Shdr* shdr = &shdrs[i];
-    if (shdr->sh_flags & SHF_ALLOC) {
-      obj->code_size += shdr->sh_size;
-    }
-  }
-  obj->code_size = (obj->code_size + 4095) & ~4095;
-  obj->code = (char*)mmap(NULL, obj->code_size,
-                          PROT_READ | PROT_WRITE | PROT_EXEC,
-                          MAP_PRIVATE | MAP_ANONYMOUS,
-                          -1, 0);
-  if (obj->code == MAP_FAILED) {
-    sprintf(obj_error, "mmap failed: %s", strerror(errno));
-    free(bin);
-    free(obj);
-    return NULL;
-  }
-
-#if OBJFCN_LOG
   {
-    char buf[256];
-    FILE* log_fp;
-    sprintf(buf, "/tmp/objfcn.%d.log", getpid());
-    log_fp = fopen(buf, "ab");
-    sprintf(buf, "%p-%p %s\n", obj->code, obj->code + obj->code_size, filename);
-    fputs(buf, log_fp);
-    fclose(log_fp);
-  }
+    size_t expected_code_size = 0;
+    for (int i = 0; i < ehdr->e_shnum; i++) {
+      Elf_Shdr* shdr = &shdrs[i];
+      if (shdr->sh_flags & SHF_ALLOC) {
+        expected_code_size += shdr->sh_size;
+      }
+    }
+
+    for (int i = 0; i < ehdr->e_shnum; i++) {
+      Elf_Shdr* shdr = &shdrs[i];
+      int has_addend = shdr->sh_type == SHT_RELA;
+      size_t relsize = has_addend ? sizeof(Elf_Rela) : sizeof(Elf_Rel);
+      int relnum = shdr->sh_size / relsize;
+
+      if ((shdr->sh_type != SHT_REL && shdr->sh_type != SHT_RELA) ||
+          !(shdrs[shdr->sh_info].sh_flags & SHF_ALLOC)) {
+        continue;
+      }
+
+      for (int j = 0; j < relnum; j++) {
+        Elf_Rela* rel = (Elf_Rela*)(bin + shdr->sh_offset + relsize * j);
+        switch (ELF_R_TYPE(rel->r_info)) {
+#ifdef R_PLT32
+          case R_PLT32: {
+#if defined(__x86_64__)
+            expected_code_size += 6 + 8;
 #endif
+            break;
+          }
+#endif
+
+#if defined(__x86_64__)
+          case R_X86_64_REX_GOTPCRELX: {
+            expected_code_size += 8;
+            break;
+          }
+#endif
+        }
+      }
+    }
+
+    obj->code_size = (expected_code_size + 4095) & ~4095;
+    obj->code = (char*)mmap(NULL, obj->code_size,
+                            PROT_READ | PROT_WRITE | PROT_EXEC,
+                            MAP_PRIVATE | MAP_ANONYMOUS,
+                            -1, 0);
+    if (obj->code == MAP_FAILED) {
+      sprintf(obj_error, "mmap failed: %s", strerror(errno));
+      free(bin);
+      free(obj);
+      return NULL;
+    }
+
+#if 0
+    fprintf(stderr, "%p-%p (+%zx) %s\n",
+            obj->code, obj->code + obj->code_size,
+            expected_code_size, filename);
+#endif
+#if OBJFCN_LOG
+    {
+      char buf[256];
+      FILE* log_fp;
+      sprintf(buf, "/tmp/objfcn.%d.log", getpid());
+      log_fp = fopen(buf, "ab");
+      fprintf(log_fp, "%p-%p (+%zx) %s\n",
+              obj->code, obj->code + obj->code_size,
+              expected_code_size, filename);
+      fclose(log_fp);
+    }
+#endif
+  }
 
 #endif
 
