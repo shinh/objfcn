@@ -277,7 +277,7 @@ void* objopen(const char* filename, int flags) {
       FILE* log_fp;
       sprintf(buf, "/tmp/objfcn.%d.log", getpid());
       log_fp = fopen(buf, "ab");
-      fprintf(log_fp, "%p-%p (+%zx) %s\n",
+      fprintf(log_fp, "objopen %p-%p (+%zx) %s\n",
               obj->code, obj->code + obj->code_size,
               expected_code_size, filename);
       fclose(log_fp);
@@ -430,6 +430,15 @@ void* objopen(const char* filename, int flags) {
 int objclose(void* handle) {
   obj_handle* obj = (obj_handle*)handle;
   if (obj->code) {
+#if OBJFCN_LOG
+    char buf[256];
+    FILE* log_fp;
+    sprintf(buf, "/tmp/objfcn.%d.log", getpid());
+    log_fp = fopen(buf, "ab");
+    fprintf(log_fp, "objclose %p-%p\n",
+            obj->code, obj->code + obj->code_size);
+    fclose(log_fp);
+#endif
     munmap(obj->code, obj->code_size);
   }
   for (int i = 0; i < obj->num_symbols; i++) {
