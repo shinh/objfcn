@@ -11,8 +11,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-#define SPLIT_ALLOC 1
+#define OBJFCN_LOG 1
+
+#define OBJFCN_SPLIT_ALLOC 1
 
 #if defined(__x86_64__)
 # define R_64 R_X86_64_64
@@ -59,7 +63,7 @@ typedef struct {
 
 static char obj_error[256];
 
-#if SPLIT_ALLOC
+#if OBJFCN_SPLIT_ALLOC
 
 static char* alloc_code(obj_handle* obj, size_t size) {
   char* r = obj->code + obj->code_used;
@@ -136,7 +140,7 @@ void* objopen(const char* filename, int flags) {
   obj_handle* obj = NULL;
   Elf_Ehdr* ehdr = NULL;
 
-#if !SPLIT_ALLOC
+#if !OBJFCN_SPLIT_ALLOC
   if (!code) {
     init();
   }
@@ -190,15 +194,15 @@ void* objopen(const char* filename, int flags) {
     }
   }
 
-#if SPLIT_ALLOC
-  size_t code_size = 0;
+#if OBJFCN_SPLIT_ALLOC
+  obj->code_size = 0;
   for (int i = 0; i < ehdr->e_shnum; i++) {
     Elf_Shdr* shdr = &shdrs[i];
     if (shdr->sh_flags & SHF_ALLOC) {
-      code_size += shdr->sh_size;
+      obj->code_size += shdr->sh_size;
     }
   }
-  obj->code_size = (code_size + 4095) & ~4095;
+  obj->code_size = (obj->code_size + 4095) & ~4095;
   obj->code = (char*)mmap(NULL, obj->code_size,
                           PROT_READ | PROT_WRITE | PROT_EXEC,
                           MAP_PRIVATE | MAP_ANONYMOUS,
@@ -209,6 +213,19 @@ void* objopen(const char* filename, int flags) {
     free(obj);
     return NULL;
   }
+
+#if OBJFCN_LOG
+  {
+    char buf[256];
+    FILE* log_fp;
+    sprintf(buf, "/tmp/objfcn.%d.log", getpid());
+    log_fp = fopen(buf, "ab");
+    sprintf(buf, "%p-%p %s\n", obj->code, obj->code + obj->code_size, filename);
+    fputs(buf, log_fp);
+    fclose(log_fp);
+  }
+#endif
+
 #endif
 
   memset(addrs, 0, sizeof(addrs));
