@@ -16,7 +16,7 @@
 
 #define OBJFCN_LOG 0
 
-#define OBJFCN_SPLIT_ALLOC 1
+#define OBJFCN_SPLIT_ALLOC 0
 
 #if defined(__x86_64__)
 # define R_64 R_X86_64_64
@@ -63,12 +63,24 @@ typedef struct {
 
 static char obj_error[256];
 
+static uintptr_t align_down(uintptr_t v, size_t align) {
+  return v & ~(align - 1);
+}
+
+static uintptr_t align_up(uintptr_t v, size_t align) {
+  return align_down(v + align - 1, align);
+}
+
 #if OBJFCN_SPLIT_ALLOC
 
 static char* alloc_code(obj_handle* obj, size_t size) {
   char* r = obj->code + obj->code_used;
   obj->code_used += size;
   return r;
+}
+
+static void align_code(obj_handle* obj, size_t align) {
+  obj->code_used = align_up(obj->code_used, align);
 }
 
 #else
@@ -80,6 +92,10 @@ static char* alloc_code(obj_handle* obj, size_t size) {
   char* r = code + code_used;
   code_used += size;
   return r;
+}
+
+static void align_code(obj_handle* obj, size_t align) {
+  code_used = align_up(code_used, align);
 }
 
 static void init(void) {
@@ -201,6 +217,7 @@ void* objopen(const char* filename, int flags) {
       Elf_Shdr* shdr = &shdrs[i];
       if (shdr->sh_flags & SHF_ALLOC) {
         expected_code_size += shdr->sh_size;
+        expected_code_size = align_up(expected_code_size, 16);
       }
     }
 
@@ -237,7 +254,7 @@ void* objopen(const char* filename, int flags) {
       }
     }
 
-    obj->code_size = (expected_code_size + 4095) & ~4095;
+    obj->code_size = align_up(expected_code_size, 4096);
     obj->code = (char*)mmap(NULL, obj->code_size,
                             PROT_READ | PROT_WRITE | PROT_EXEC,
                             MAP_PRIVATE | MAP_ANONYMOUS,
@@ -275,6 +292,7 @@ void* objopen(const char* filename, int flags) {
     Elf_Shdr* shdr = &shdrs[i];
     if (shdr->sh_flags & SHF_ALLOC) {
       addrs[i] = alloc_code(obj, shdr->sh_size);
+      align_code(obj, 16);
       if (shdr->sh_type != SHT_NOBITS) {
         memcpy(addrs[i], bin + shdr->sh_offset, shdr->sh_size);
       }
