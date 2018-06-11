@@ -295,7 +295,10 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
       symnum = shdr->sh_size / sizeof(Elf_Sym);
       strtab_index = shdr->sh_link;
     }
+  }
 
+  for (int i = 0; i < ehdr->e_shnum; i++) {
+    Elf_Shdr* shdr = &shdrs[i];
     if (shdr->sh_type == SHT_STRTAB && i == strtab_index) {
       strtab = bin + shdr->sh_offset;
     }
