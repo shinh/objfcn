@@ -196,7 +196,7 @@ static size_t relocate(obj_handle* obj,
               if (sym_addr == NULL) {
                 sprintf(obj_error, "failed to resolve %s",
                         strtab + sym->st_name);
-                return 0;
+                return (size_t)-1;
               }
             } else {
               sym_addr = addrs[sym->st_shndx];
@@ -206,7 +206,7 @@ static size_t relocate(obj_handle* obj,
           default:
             sprintf(obj_error, "unsupported relocation sym %d",
                     ELF_ST_TYPE(sym->st_info));
-            return 0;
+            return (size_t)-1;
         }
         //fprintf(stderr, "%d %s target=%p sym_addr=%p addend=%d\n",
         //        j, strtab + sym->st_name, target, sym_addr, addend);
@@ -216,14 +216,14 @@ static size_t relocate(obj_handle* obj,
 #ifdef R_64
         case R_64:
           if (!code_size_only)
-            *(uint64_t*)target = (uint64_t)sym_addr + addend;
+            *(uint64_t*)target += (uint64_t)sym_addr + addend;
           break;
 #endif
 
 #ifdef R_PC32
         case R_PC32:
           if (!code_size_only)
-            *(uint32_t*)target = (sym_addr - target) + addend;
+            *(uint32_t*)target += (sym_addr - target) + addend;
           break;
 #endif
 
@@ -232,15 +232,15 @@ static size_t relocate(obj_handle* obj,
           if (code_size_only) {
             code_size += 6 + 8;
           } else {
-            void* dest = sym_addr;
 #if defined(__x86_64__)
+            void* dest = sym_addr;
             sym_addr = alloc_code(obj, 6 + 8);
             sym_addr[0] = 0xff;
             sym_addr[1] = 0x25;
             *(uint32_t*)(sym_addr + 2) = 0;
             *(uint64_t*)(sym_addr + 6) = (uint64_t)dest;
 #endif
-            *(uint32_t*)target = (sym_addr - target) + addend;
+            *(uint32_t*)target += (sym_addr - target) + addend;
           }
           break;
 #endif
@@ -253,14 +253,15 @@ static size_t relocate(obj_handle* obj,
             void* dest = sym_addr;
             sym_addr = alloc_code(obj, 8);
             *(uint64_t*)(sym_addr) = (uint64_t)dest;
-            *(uint32_t*)target = (sym_addr - target) + addend;
+            *(uint32_t*)target += (sym_addr - target) + addend;
           }
           break;
 #endif
 
         default:
-          sprintf(obj_error, "Unknown reloc: %ld", ELF_R_TYPE(rel->r_info));
-          return 0;
+          sprintf(obj_error, "Unknown reloc: %ld",
+                  (long)ELF_R_TYPE(rel->r_info));
+          return (size_t)-1;
       }
     }
   }
@@ -300,8 +301,12 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
         expected_code_size = align_up(expected_code_size, 16);
       }
     }
-    expected_code_size += relocate(obj, bin, symtab, strtab, addrs,
-                                   1 /* code_size_only */);
+    size_t reloc_code_size = relocate(obj, bin, symtab, strtab, addrs,
+                                      1 /* code_size_only */);
+    if (reloc_code_size == (size_t)-1) {
+      return 0;
+    }
+    expected_code_size += reloc_code_size;
 
     obj->code_size = align_up(expected_code_size, 4096);
     obj->code = (char*)mmap(NULL, obj->code_size,
@@ -369,7 +374,10 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
     }
   }
 
-  relocate(obj, bin, symtab, strtab, addrs, 0 /* code_size_only */);
+  if (relocate(obj, bin, symtab, strtab, addrs, 0 /* code_size_only */) ==
+      (size_t)-1) {
+    return 0;
+  }
   return 1;
 }
 
