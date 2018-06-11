@@ -20,8 +20,12 @@ int func_in_main(void) {
   return 99;
 }
 
-int main() {
-  void* handle = objopen("func.o", 0);
+int main(int argc, char* argv[]) {
+  if (argc <= 1) {
+    fprintf(stderr, "object file not specified\n");
+    return 1;
+  }
+  void* handle = objopen(argv[1], 0);
   if (handle == NULL) {
     fprintf(stderr, "objopen failed: %s\n", objerror());
     return 1;
