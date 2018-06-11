@@ -25,6 +25,7 @@
 #elif defined(__i386__)
 # define R_32 R_386_32
 # define R_PC32 R_386_PC32
+#elif defined(__arm__)
 #else
 # error "Unsupported architecture"
 #endif
@@ -154,6 +155,10 @@ error:
   return NULL;
 }
 
+static int should_load(Elf_Shdr* shdr) {
+  return shdr->sh_flags & SHF_ALLOC && shdr->sh_type != SHT_ARM_EXIDX;
+}
+
 static size_t relocate(obj_handle* obj,
                        const char* bin,
                        Elf_Sym* symtab,
@@ -171,7 +176,7 @@ static size_t relocate(obj_handle* obj,
     char* target_base = addrs[shdr->sh_info];
 
     if ((shdr->sh_type != SHT_REL && shdr->sh_type != SHT_RELA) ||
-        !(shdrs[shdr->sh_info].sh_flags & SHF_ALLOC)) {
+        !should_load(&shdrs[shdr->sh_info])) {
       continue;
     }
 
@@ -268,6 +273,32 @@ static size_t relocate(obj_handle* obj,
           break;
 #endif
 
+#if defined(__arm__)
+        case R_ARM_CALL:
+          if (code_size_only) {
+            code_size += 8;
+          } else {
+            void* dest = sym_addr;
+            sym_addr = alloc_code(obj, 8);
+            // ldr pc, [pc, #-4]
+            *(uint32_t*)sym_addr = 0xe51ff004;
+            *(uint32_t*)(sym_addr + 4) = (uint32_t)dest;
+            int32_t v = ((sym_addr - target) + addend - 8) >> 2;
+            if (v >= (1 << 23) || v < -(1 << 23)) {
+              sprintf(obj_error, "Relocation out of range: %x", v);
+              return (size_t)-1;
+            }
+            *(uint32_t*)target =
+                (((uint8_t*)target)[3] << 24U) | (0xffffff & v);
+          }
+          break;
+
+        case R_ARM_ABS32:
+          if (!code_size_only)
+            *(uint32_t*)target = (uint32_t)sym_addr + addend;
+          break;
+#endif
+
         default:
           sprintf(obj_error, "Unknown reloc: %ld",
                   (long)ELF_R_TYPE(rel->r_info));
@@ -309,7 +340,7 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
     size_t expected_code_size = 0;
     for (int i = 0; i < ehdr->e_shnum; i++) {
       Elf_Shdr* shdr = &shdrs[i];
-      if (shdr->sh_flags & SHF_ALLOC) {
+      if (should_load(shdr)) {
         expected_code_size += shdr->sh_size;
         expected_code_size = align_up(expected_code_size, 16);
       }
@@ -355,7 +386,7 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
   memset(addrs, 0, sizeof(addrs));
   for (int i = 0; i < ehdr->e_shnum; i++) {
     Elf_Shdr* shdr = &shdrs[i];
-    if (shdr->sh_flags & SHF_ALLOC) {
+    if (should_load(shdr)) {
       addrs[i] = alloc_code(obj, shdr->sh_size);
       align_code(obj, 16);
       if (shdr->sh_type != SHT_NOBITS) {
@@ -391,6 +422,11 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
       (size_t)-1) {
     return 0;
   }
+
+#if defined(__arm__)
+  __builtin___clear_cache(obj->code, obj->code + obj->code_size);
+#endif
+
   return 1;
 }
 
