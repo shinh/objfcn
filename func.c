@@ -4,7 +4,9 @@ int g_counter = 0;
 int g_value = 3;
 const int g_const = 42;
 
-int dummy(void) {}
+int dummy(void) {
+  return -3;
+}
 
 int func_in_main(void);
 
