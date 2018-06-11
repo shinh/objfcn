@@ -22,6 +22,9 @@
 # define R_64 R_X86_64_64
 # define R_PC32 R_X86_64_PC32
 # define R_PLT32 R_X86_64_PLT32
+#elif defined(__i386__)
+# define R_32 R_386_32
+# define R_PC32 R_386_PC32
 #else
 # error "Unsupported architecture"
 #endif
@@ -213,6 +216,13 @@ static size_t relocate(obj_handle* obj,
       }
 
       switch (ELF_R_TYPE(rel->r_info)) {
+#ifdef R_32
+        case R_32:
+          if (!code_size_only)
+            *(uint32_t*)target += (uint32_t)sym_addr + addend;
+          break;
+#endif
+
 #ifdef R_64
         case R_64:
           if (!code_size_only)

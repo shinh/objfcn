@@ -1,18 +1,30 @@
 CFLAGS := -g -O -Wall -MMD
 
+TEST_TARGET_OBJS := \
+	func_64_pie.o \
+	func_64_pic.o \
+	func_32_nopic.o
+
 all: test
 
-test: test_objfcn func_64_pic.o func_64_pie.o
-	./$< func_64_pic.o
-	./$< func_64_pie.o
+test: test_objfcn_64 test_objfcn_32 $(TEST_TARGET_OBJS)
+	./test_objfcn_64 func_64_pie.o
+	./test_objfcn_64 func_64_pic.o
+	./test_objfcn_32 func_32_nopic.o
 
-test_objfcn: test_objfcn.o objfcn.o
-	$(CC) $(CFLAGS) -ldl -rdynamic -o $@ $^
+test_objfcn_64: test_objfcn.c objfcn.c
+	$(CC) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
+
+test_objfcn_32: test_objfcn.c objfcn.c
+	$(CC) $(CFLAGS) -m32 -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
 
 func_64_pic.o: func.c
 	$(CC) -fPIC -c -o $@ $<
 
 func_64_pie.o: func.c
 	$(CC) -fPIE -c -o $@ $<
+
+func_32_nopic.o: func.c
+	$(CC) -m32 -fno-PIC -c -o $@ $<
 
 -include *.d
