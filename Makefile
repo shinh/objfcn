@@ -19,6 +19,7 @@ test: $(TEST_BINARIES) $(TEST_TARGET_OBJS)
 	./test_objfcn_64 func_64_pie.o
 	./test_objfcn_64 func_64_pic.o
 	./test_objfcn_32 func_32_nopic.o
+	./test_objfcn_64 func_64.so
 ifdef ARM
 	qemu-arm -L /usr/arm-linux-gnueabi ./test_objfcn_arm32 func_arm32_nopic.o
 endif
