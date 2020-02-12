@@ -6,7 +6,8 @@ TEST_TARGET_OBJS := \
 	func_64_pie.o \
 	func_64_pic.o \
 	func_32_nopic.o \
-	func_64.so
+	func_64.so \
+	complex_64.so
 
 ifdef ARM
 TEST_BINARIES += test_objfcn_arm32
@@ -38,6 +39,9 @@ func_64_pic.o: func.c
 
 func_64.so: func_64_pic.o
 	$(CC) -fPIC -shared -o $@ $<
+
+complex_64.so: complex.cc
+	$(CXX) -fPIC -shared -o $@ $<
 
 func_64_pie.o: func.c
 	$(CC) -fPIE -c -o $@ $<

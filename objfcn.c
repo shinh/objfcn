@@ -17,6 +17,8 @@
 
 #define OBJFCN_LOG 1
 
+#define OBJFCN_TLS_SIZE 8192
+
 #if OBJFCN_LOG
 # define LOGF(...) if (1) fprintf(stderr, __VA_ARGS__)
 #else
@@ -62,6 +64,8 @@
 # define ELF_R_SYM(v) ELF32_R_SYM(v)
 # define ELF_R_TYPE(v) ELF32_R_TYPE(v)
 #endif
+
+__thread char g_objfcn_tls[OBJFCN_TLS_SIZE];
 
 typedef struct {
   char* name;
@@ -441,6 +445,16 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
       break;
     }
 
+    case R_X86_64_DTPMOD64: {
+      // TODO(hamaji): Retrive the right module ID.
+      *addr = (void*)1;
+      break;
+    }
+
+    case R_X86_64_DTPOFF64: {
+      break;
+    }
+
     default:
       LOGF("Unsupported reloc: %d\n", type);
       abort();
@@ -476,6 +490,13 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
     Elf_Phdr* phdr = &phdrs[i];
     if (phdr->p_type != PT_LOAD) continue;
     memcpy(code + phdr->p_vaddr, bin + phdr->p_offset, phdr->p_filesz);
+  }
+
+  for (int i = 0; i < ehdr->e_phnum; i++) {
+    Elf_Phdr* phdr = &phdrs[i];
+    if (phdr->p_type != PT_TLS) continue;
+    assert(phdr->p_memsz <= OBJFCN_TLS_SIZE);
+    memcpy(g_objfcn_tls, bin + phdr->p_offset, phdr->p_filesz);
   }
 
   for (int i = 0; i < ehdr->e_phnum; i++) {
