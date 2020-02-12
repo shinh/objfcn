@@ -512,6 +512,8 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
 
     Elf_Rel* rel = NULL;
     int relsz = 0, pltrelsz = 0;
+    void** init_array = NULL;
+    int init_arraysz = 0;
     for (Elf_Dyn* dyn = dyns; dyn->d_tag; dyn++) {
       switch (dyn->d_tag) {
       case DT_NEEDED: {
@@ -553,12 +555,27 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
         break;
       }
 
+      case DT_INIT_ARRAY: {
+        init_array = (void**)(code + dyn->d_un.d_ptr);
+        break;
+      }
+      case DT_INIT_ARRAYSZ: {
+        init_arraysz = dyn->d_un.d_val;
+        break;
+      }
+
       }
     }
 
     assert(rel);
     relocate_dyn("rel", obj, rel, relsz);
     relocate_dyn("pltrel", obj, rel + relsz / sizeof(*rel), pltrelsz);
+
+    if (init_array) {
+      for (int i = 0; i < init_arraysz / sizeof(void*); i++) {
+        ((void(*)())(init_array[i]))();
+      }
+    }
   }
 
 #if defined(__arm__)
