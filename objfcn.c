@@ -3,6 +3,7 @@
 #endif
 #include "objfcn.h"
 
+#include <assert.h>
 #include <dlfcn.h>
 #include <elf.h>
 #include <errno.h>
@@ -33,20 +34,24 @@
 #if __SIZEOF_POINTER__ == 8
 # define Elf_Addr Elf64_Addr
 # define Elf_Ehdr Elf64_Ehdr
+# define Elf_Phdr Elf64_Phdr
 # define Elf_Shdr Elf64_Shdr
 # define Elf_Sym Elf64_Sym
 # define Elf_Rel Elf64_Rel
 # define Elf_Rela Elf64_Rela
+# define Elf_Dyn Elf64_Dyn
 # define ELF_ST_TYPE(v) ELF64_ST_TYPE(v)
 # define ELF_R_SYM(v) ELF64_R_SYM(v)
 # define ELF_R_TYPE(v) ELF64_R_TYPE(v)
 #else
 # define Elf_Addr Elf32_Addr
 # define Elf_Ehdr Elf32_Ehdr
+# define Elf_Phdr Elf32_Phdr
 # define Elf_Shdr Elf32_Shdr
 # define Elf_Sym Elf32_Sym
 # define Elf_Rel Elf32_Rel
 # define Elf_Rela Elf32_Rela
+# define Elf_Dyn Elf32_Dyn
 # define ELF_ST_TYPE(v) ELF32_ST_TYPE(v)
 # define ELF_R_SYM(v) ELF32_R_SYM(v)
 # define ELF_R_TYPE(v) ELF32_R_TYPE(v)
@@ -58,11 +63,45 @@ typedef struct {
 } symbol;
 
 typedef struct {
+  uint32_t nbuckets;
+  uint32_t symndx;
+  uint32_t maskwords;
+  uint32_t shift2;
+  uint8_t tail[1];
+} Elf_GnuHash;
+
+static Elf_Addr* gnu_hash_bloom_filter(Elf_GnuHash* hash) {
+  return (Elf_Addr*)(hash->tail);
+}
+
+static uint32_t* gnu_hash_buckets(Elf_GnuHash* hash) {
+  return (uint32_t*)(&gnu_hash_bloom_filter(hash)[hash->maskwords]);
+}
+
+static uint32_t* gnu_hash_hashvals(Elf_GnuHash* hash) {
+  return (uint32_t*)(&gnu_hash_buckets(hash)[hash->nbuckets]);
+}
+
+static uint32_t gnu_hash_calc(const char* p) {
+  uint32_t h = 5381;
+  for (; *p; p++) {
+    h = h * 33 + (unsigned char)*p;
+  }
+  return h;
+}
+
+typedef struct {
   symbol* symbols;
   int num_symbols;
   char* code;
   size_t code_size;
   size_t code_used;
+
+  int is_dyn;
+  char* base;
+  const char* strtab;
+  Elf_Sym* symtab;
+  Elf_GnuHash* gnu_hash;
 } obj_handle;
 
 static char obj_error[256];
@@ -309,6 +348,93 @@ static size_t relocate(obj_handle* obj,
   return code_size;
 }
 
+static int load_object_dyn(obj_handle* obj, const char* bin, const char* filesize) {
+  Elf_Ehdr* ehdr = (Elf_Ehdr*)bin;
+  Elf_Phdr* phdrs = (Elf_Phdr*)(bin + ehdr->e_phoff);
+
+  size_t max_addr = 0;
+  for (int i = 0; i < ehdr->e_phnum; i++) {
+    Elf_Phdr* phdr = &phdrs[i];
+    if (phdr->p_type != PT_LOAD) continue;
+    size_t end_addr = align_up(phdr->p_vaddr + phdr->p_memsz, 4096);
+    if (max_addr < end_addr) {
+      max_addr = end_addr;
+    }
+  }
+
+  char* code = alloc_code(obj, max_addr);
+  align_code(obj, 4096);
+
+  for (int i = 0; i < ehdr->e_phnum; i++) {
+    Elf_Phdr* phdr = &phdrs[i];
+    if (phdr->p_type != PT_LOAD) continue;
+    memcpy(code + phdr->p_vaddr, bin + phdr->p_offset, phdr->p_filesz);
+  }
+
+  for (int i = 0; i < ehdr->e_phnum; i++) {
+    Elf_Phdr* phdr = &phdrs[i];
+    if (phdr->p_type != PT_DYNAMIC) continue;
+
+    Elf_Dyn* dyns = (Elf_Dyn*)(code + phdr->p_vaddr);
+    for (Elf_Dyn* dyn = dyns; dyn->d_tag; dyn++) {
+      if (dyn->d_tag == DT_STRTAB) {
+        obj->strtab = code + dyn->d_un.d_ptr;
+      }
+    }
+
+    for (Elf_Dyn* dyn = dyns; dyn->d_tag; dyn++) {
+      switch (dyn->d_tag) {
+      case DT_NEEDED: {
+        const char* name = obj->strtab + dyn->d_un.d_ptr;
+        void* handle = dlopen(name, RTLD_GLOBAL);
+        // fprintf(stderr, "DT_NEEDED %s %p\n", name, handle);
+        (void)handle;
+        break;
+      }
+
+      case DT_SYMTAB:
+        obj->symtab = (Elf_Sym*)(code + dyn->d_un.d_ptr);
+        break;
+
+      case DT_GNU_HASH:
+        obj->gnu_hash = (Elf_GnuHash*)(code + dyn->d_un.d_ptr);
+        break;
+
+      }
+    }
+  }
+
+#if defined(__arm__)
+  __builtin___clear_cache(obj->code, obj->code + obj->code_size);
+#endif
+  obj->base = code;
+  obj->is_dyn = 1;
+  return 1;
+}
+
+static void* objsym_dyn(obj_handle* obj, const char* symbol) {
+  assert(obj->symtab);
+  // TODO(hamaji): Support DT_HASH.
+  assert(obj->gnu_hash);
+  Elf_GnuHash* gnu_hash = obj->gnu_hash;
+
+  uint32_t h = gnu_hash_calc(symbol);
+  // TODO(hamaji): Use the bloom filter.
+  int n = gnu_hash_buckets(gnu_hash)[h % gnu_hash->nbuckets];
+  // fprintf(stderr, "lookup n=%d mask=%x\n", n, gnu_hash->maskwords);
+  if (n == 0) return NULL;
+  const uint32_t* hv = &gnu_hash_hashvals(gnu_hash)[n - gnu_hash->symndx];
+  for (Elf_Sym* sym = &obj->symtab[n];; ++sym) {
+    uint32_t h2 = *hv++;
+    if ((h & ~1) == (h2 & ~1) &&
+        !strcmp(symbol, obj->strtab + sym->st_name)) {
+      return obj->base + sym->st_value;
+    }
+    if (h2 & 1) break;
+  }
+  return NULL;
+}
+
 static int load_object(obj_handle* obj, const char* bin, const char* filename) {
   Elf_Ehdr* ehdr = (Elf_Ehdr*)bin;
   Elf_Shdr* shdrs = (Elf_Shdr*)(bin + ehdr->e_shoff);
@@ -467,14 +593,21 @@ void* objopen(const char* filename, int flags) {
 
   // TODO: more validation.
 
-  if (load_object(obj, bin, filename)) {
-    free(bin);
-    return obj;
+  if (ehdr->e_type == ET_DYN) {
+    if (load_object_dyn(obj, bin, filename)) {
+      free(bin);
+      return obj;
+    }
   } else {
-    free(bin);
-    objclose(obj);
-    return NULL;
+    if (load_object(obj, bin, filename)) {
+      free(bin);
+      return obj;
+    }
   }
+
+  free(bin);
+  objclose(obj);
+  return NULL;
 }
 
 int objclose(void* handle) {
@@ -500,6 +633,10 @@ int objclose(void* handle) {
 
 void* objsym(void* handle, const char* symbol) {
   obj_handle* obj = (obj_handle*)handle;
+  if (obj->is_dyn) {
+    return objsym_dyn(obj, symbol);
+  }
+
   for (int i = 0; i < obj->num_symbols; i++) {
     if (!strcmp(obj->symbols[i].name, symbol)) {
       return obj->symbols[i].addr;
