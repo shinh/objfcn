@@ -354,6 +354,29 @@ static size_t relocate(obj_handle* obj,
   return code_size;
 }
 
+static void* objsym_dyn(obj_handle* obj, const char* symbol) {
+  assert(obj->symtab);
+  // TODO(hamaji): Support DT_HASH.
+  assert(obj->gnu_hash);
+  Elf_GnuHash* gnu_hash = obj->gnu_hash;
+
+  uint32_t h = gnu_hash_calc(symbol);
+  // TODO(hamaji): Use the bloom filter.
+  int n = gnu_hash_buckets(gnu_hash)[h % gnu_hash->nbuckets];
+  // fprintf(stderr, "lookup n=%d mask=%x\n", n, gnu_hash->maskwords);
+  if (n == 0) return NULL;
+  const uint32_t* hv = &gnu_hash_hashvals(gnu_hash)[n - gnu_hash->symndx];
+  for (Elf_Sym* sym = &obj->symtab[n];; ++sym) {
+    uint32_t h2 = *hv++;
+    if ((h & ~1) == (h2 & ~1) &&
+        !strcmp(symbol, obj->strtab + sym->st_name)) {
+      return obj->base + sym->st_value;
+    }
+    if (h2 & 1) break;
+  }
+  return NULL;
+}
+
 static void undefined() {
   LOGF("undefined function called\n");
   abort();
@@ -370,6 +393,7 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
     const char* sname = obj->strtab + sym->st_name;
     void* val = 0;
 
+    val = objsym_dyn(obj, sname);
     if (!val)
       val = dlsym(RTLD_DEFAULT, sname);
 
@@ -520,29 +544,6 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
   __builtin___clear_cache(obj->code, obj->code + obj->code_size);
 #endif
   return 1;
-}
-
-static void* objsym_dyn(obj_handle* obj, const char* symbol) {
-  assert(obj->symtab);
-  // TODO(hamaji): Support DT_HASH.
-  assert(obj->gnu_hash);
-  Elf_GnuHash* gnu_hash = obj->gnu_hash;
-
-  uint32_t h = gnu_hash_calc(symbol);
-  // TODO(hamaji): Use the bloom filter.
-  int n = gnu_hash_buckets(gnu_hash)[h % gnu_hash->nbuckets];
-  // fprintf(stderr, "lookup n=%d mask=%x\n", n, gnu_hash->maskwords);
-  if (n == 0) return NULL;
-  const uint32_t* hv = &gnu_hash_hashvals(gnu_hash)[n - gnu_hash->symndx];
-  for (Elf_Sym* sym = &obj->symtab[n];; ++sym) {
-    uint32_t h2 = *hv++;
-    if ((h & ~1) == (h2 & ~1) &&
-        !strcmp(symbol, obj->strtab + sym->st_name)) {
-      return obj->base + sym->st_value;
-    }
-    if (h2 & 1) break;
-  }
-  return NULL;
 }
 
 static int load_object(obj_handle* obj, const char* bin, const char* filename) {
