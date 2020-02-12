@@ -15,7 +15,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define OBJFCN_LOG 0
+#define OBJFCN_LOG 1
+
+#if OBJFCN_LOG
+# define LOGF(...) if (1) fprintf(stderr, __VA_ARGS__)
+#else
+# define LOGF(...) if (0) fprintf(stderr, __VA_ARGS__)
+#endif
 
 #define OBJFCN_SPLIT_ALLOC 0
 
@@ -37,7 +43,7 @@
 # define Elf_Phdr Elf64_Phdr
 # define Elf_Shdr Elf64_Shdr
 # define Elf_Sym Elf64_Sym
-# define Elf_Rel Elf64_Rel
+# define Elf_Rel Elf64_Rela
 # define Elf_Rela Elf64_Rela
 # define Elf_Dyn Elf64_Dyn
 # define ELF_ST_TYPE(v) ELF64_ST_TYPE(v)
@@ -348,7 +354,81 @@ static size_t relocate(obj_handle* obj,
   return code_size;
 }
 
-static int load_object_dyn(obj_handle* obj, const char* bin, const char* filesize) {
+static void undefined() {
+  LOGF("undefined function called\n");
+  abort();
+}
+
+static void relocate_dyn(const char* reloc_type, obj_handle* obj,
+                         Elf_Rel* rel, int relsz) {
+  int i;
+  for (i = 0; i < relsz / sizeof(*rel); rel++, i++) {
+    LOGF("rel offset=%x\n", (int)rel->r_offset);
+    void** addr = (void**)(obj->base + rel->r_offset);
+    int type = ELF_R_TYPE(rel->r_info);
+    Elf_Sym* sym = obj->symtab + ELF_R_SYM(rel->r_info);
+    const char* sname = obj->strtab + sym->st_name;
+    void* val = 0;
+
+    if (!val)
+      val = dlsym(RTLD_DEFAULT, sname);
+
+    LOGF("%s: %p %s(%p) %d => %p\n",
+         reloc_type, (void*)addr, sname, sym, type, val);
+
+    switch (type) {
+#if 0
+    case R_386_32: {
+      *addr += (int)val;
+    }
+    case R_386_COPY: {
+      if (val) {
+        *addr = *(int*)val;
+      } else {
+        fprintf(stderr, "undefined: %s\n", sname);
+        abort();
+      }
+    }
+    case R_386_GLOB_DAT: {
+      break;
+    }
+    case R_386_JMP_SLOT: {
+      if (val) {
+        *addr = (int)val;
+      } else {
+        *addr = (int)&undefined;
+      }
+      break;
+    }
+#endif
+
+    case R_X86_64_GLOB_DAT:
+    case R_X86_64_JUMP_SLOT: {
+      if (val) {
+        *addr = val;
+      } else {
+        *addr = &undefined;
+      }
+      break;
+    }
+
+    case R_X86_64_RELATIVE: {
+      *addr = (void*)(*(char**)addr + (intptr_t)obj->base);
+      break;
+    }
+
+    default:
+      LOGF("Unsupported reloc: %d\n", type);
+      abort();
+      break;
+
+    }
+
+  }
+}
+
+static int load_object_dyn(obj_handle* obj, const char* bin,
+                           const char* filename) {
   Elf_Ehdr* ehdr = (Elf_Ehdr*)bin;
   Elf_Phdr* phdrs = (Elf_Phdr*)(bin + ehdr->e_phoff);
 
@@ -364,6 +444,9 @@ static int load_object_dyn(obj_handle* obj, const char* bin, const char* filesiz
 
   char* code = alloc_code(obj, max_addr);
   align_code(obj, 4096);
+
+  obj->base = code;
+  obj->is_dyn = 1;
 
   for (int i = 0; i < ehdr->e_phnum; i++) {
     Elf_Phdr* phdr = &phdrs[i];
@@ -382,12 +465,14 @@ static int load_object_dyn(obj_handle* obj, const char* bin, const char* filesiz
       }
     }
 
+    Elf_Rel* rel = NULL;
+    int relsz = 0, pltrelsz = 0;
     for (Elf_Dyn* dyn = dyns; dyn->d_tag; dyn++) {
       switch (dyn->d_tag) {
       case DT_NEEDED: {
         const char* name = obj->strtab + dyn->d_un.d_ptr;
         void* handle = dlopen(name, RTLD_GLOBAL);
-        // fprintf(stderr, "DT_NEEDED %s %p\n", name, handle);
+        LOGF("DT_NEEDED %s %p\n", name, handle);
         (void)handle;
         break;
       }
@@ -400,15 +485,40 @@ static int load_object_dyn(obj_handle* obj, const char* bin, const char* filesiz
         obj->gnu_hash = (Elf_GnuHash*)(code + dyn->d_un.d_ptr);
         break;
 
+      case DT_RELENT:
+      case DT_PLTREL: {
+        int pltrel = dyn->d_un.d_val;
+        assert(pltrel == DT_RELA);
+        break;
+      }
+
+      case DT_RELA: {
+        rel = (Elf_Rel*)(code + dyn->d_un.d_ptr);
+        LOGF("rel: %p\n", rel);
+        break;
+      }
+      case DT_RELASZ: {
+        relsz = dyn->d_un.d_val;
+        LOGF("relsz: %d\n", relsz);
+        break;
+      }
+      case DT_PLTRELSZ: {
+        pltrelsz = dyn->d_un.d_val;
+        LOGF("pltrelsz: %d\n", pltrelsz);
+        break;
+      }
+
       }
     }
+
+    assert(rel);
+    relocate_dyn("rel", obj, rel, relsz);
+    relocate_dyn("pltrel", obj, rel + relsz / sizeof(*rel), pltrelsz);
   }
 
 #if defined(__arm__)
   __builtin___clear_cache(obj->code, obj->code + obj->code_size);
 #endif
-  obj->base = code;
-  obj->is_dyn = 1;
   return 1;
 }
 
