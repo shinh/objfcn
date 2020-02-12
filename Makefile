@@ -23,13 +23,13 @@ ifdef ARM
 	qemu-arm -L /usr/arm-linux-gnueabi ./test_objfcn_arm32 func_arm32_nopic.o
 endif
 
-test_objfcn_64: test_objfcn.c objfcn.c
+test_objfcn_64: test_objfcn.c objfcn.c func.c
 	$(CC) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
 
-test_objfcn_32: test_objfcn.c objfcn.c
+test_objfcn_32: test_objfcn.c objfcn.c func.c
 	$(CC) $(CFLAGS) -m32 -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
 
-test_objfcn_arm32: test_objfcn.c objfcn.c
+test_objfcn_arm32: test_objfcn.c objfcn.c func.c
 	$(CLANG) -target arm-linux-gnueabi $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
 
 func_64_pic.o: func.c
