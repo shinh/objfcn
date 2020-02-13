@@ -1,5 +1,6 @@
 CLANG := clang
 CFLAGS := -g -O -Wall -MMD
+AARCH64_CXX := aarch64-linux-gnu-g++
 
 TEST_BINARIES := test_objfcn_64 test_objfcn_32 test_objfcn_cpp_64
 TEST_TARGET_OBJS := \
@@ -12,6 +13,11 @@ TEST_TARGET_OBJS := \
 ifdef ARM
 TEST_BINARIES += test_objfcn_arm32
 TEST_TARGET_OBJS += func_arm32_nopic.o
+endif
+
+ifdef AARCH64
+TEST_BINARIES += test_objfcn_cpp_aarch64
+TEST_TARGET_OBJS += cpp_aarch64.so
 endif
 
 all: test
@@ -38,6 +44,9 @@ test_objfcn_arm32: test_objfcn.c objfcn.c func.c
 test_objfcn_cpp_64: test_objfcn_cpp.cc objfcn.c
 	$(CXX) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c
 
+test_objfcn_cpp_aarch64: test_objfcn_cpp.cc objfcn.c
+	$(AARCH64_CXX) $(CFLAGS) -rdynamic -o $@ test_objfcn.c objfcn.c -ldl
+
 func_64_pic.o: func.c
 	$(CC) -fPIC -c -o $@ $<
 
@@ -55,5 +64,8 @@ func_32_nopic.o: func.c
 
 func_arm32_nopic.o: func.c
 	$(CLANG) -target arm-linux-gnueabi -fno-PIC -c -o $@ $<
+
+cpp_aarch64.so: cpp.cc
+	$(AARCH64_CXX) -fPIC -shared -o $@ $<
 
 -include *.d

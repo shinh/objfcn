@@ -35,6 +35,7 @@
 # define R_32 R_386_32
 # define R_PC32 R_386_PC32
 #elif defined(__arm__)
+#elif defined(__aarch64__)
 #else
 # error "Unsupported architecture"
 #endif

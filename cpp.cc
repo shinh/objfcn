@@ -23,11 +23,11 @@ extern "C" {
 
 class BaseImpl : public Base {
 public:
-    int vf() override {
-        return 1234;
-    }
+  int vf() override {
+    return 1234;
+  }
 };
 
 Base* MakeBase() {
-    new BaseImpl();
+  return new BaseImpl();
 }
