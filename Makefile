@@ -1,13 +1,13 @@
 CLANG := clang
 CFLAGS := -g -O -Wall -MMD
 
-TEST_BINARIES := test_objfcn_64 test_objfcn_32
+TEST_BINARIES := test_objfcn_64 test_objfcn_32 test_objfcn_cpp_64
 TEST_TARGET_OBJS := \
 	func_64_pie.o \
 	func_64_pic.o \
 	func_32_nopic.o \
 	func_64.so \
-	complex_64.so
+	cpp_64.so
 
 ifdef ARM
 TEST_BINARIES += test_objfcn_arm32
@@ -21,6 +21,7 @@ test: $(TEST_BINARIES) $(TEST_TARGET_OBJS)
 	./test_objfcn_64 func_64_pic.o
 	./test_objfcn_32 func_32_nopic.o
 	./test_objfcn_64 func_64.so
+	./test_objfcn_cpp_64 cpp_64.so
 ifdef ARM
 	qemu-arm -L /usr/arm-linux-gnueabi ./test_objfcn_arm32 func_arm32_nopic.o
 endif
@@ -34,13 +35,16 @@ test_objfcn_32: test_objfcn.c objfcn.c func.c
 test_objfcn_arm32: test_objfcn.c objfcn.c func.c
 	$(CLANG) -target arm-linux-gnueabi $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
 
+test_objfcn_cpp_64: test_objfcn.c objfcn.c cpp.cc
+	$(CXX) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
+
 func_64_pic.o: func.c
 	$(CC) -fPIC -c -o $@ $<
 
 func_64.so: func_64_pic.o
 	$(CC) -fPIC -shared -o $@ $<
 
-complex_64.so: complex.cc
+cpp_64.so: cpp.cc
 	$(CXX) -fPIC -shared -o $@ $<
 
 func_64_pie.o: func.c

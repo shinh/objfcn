@@ -388,7 +388,7 @@ static void undefined() {
 
 static void relocate_dyn(const char* reloc_type, obj_handle* obj,
                          Elf_Rel* rel, int relsz) {
-  int i;
+  size_t i;
   for (i = 0; i < relsz / sizeof(*rel); rel++, i++) {
     LOGF("rel offset=%x\n", (int)rel->r_offset);
     void** addr = (void**)(obj->base + rel->r_offset);
@@ -435,7 +435,7 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
       if (val) {
         *addr = val;
       } else {
-        *addr = &undefined;
+        *addr = (void*)&undefined;
       }
       break;
     }
@@ -581,7 +581,7 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
     relocate_dyn("pltrel", obj, rel + relsz / sizeof(*rel), pltrelsz);
 
     if (init_array) {
-      for (int i = 0; i < init_arraysz / sizeof(void*); i++) {
+      for (size_t i = 0; i < init_arraysz / sizeof(void*); i++) {
         ((void(*)())(init_array[i]))();
       }
     }
