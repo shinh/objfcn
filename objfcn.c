@@ -445,6 +445,15 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
       break;
     }
 
+    case R_X86_64_64: {
+#if __SIZEOF_POINTER__ == 8
+      *addr = (void*)((char*)val + rel->r_addend);
+#else
+      *addr = val;
+#endif
+      break;
+    }
+
     case R_X86_64_DTPMOD64: {
       // TODO(hamaji): Retrive the right module ID.
       *addr = (void*)1;
