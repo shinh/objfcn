@@ -35,8 +35,8 @@ test_objfcn_32: test_objfcn.c objfcn.c func.c
 test_objfcn_arm32: test_objfcn.c objfcn.c func.c
 	$(CLANG) -target arm-linux-gnueabi $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
 
-test_objfcn_cpp_64: test_objfcn.c objfcn.c cpp.cc
-	$(CXX) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
+test_objfcn_cpp_64: test_objfcn_cpp.cc objfcn.c
+	$(CXX) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c
 
 func_64_pic.o: func.c
 	$(CC) -fPIC -c -o $@ $<

@@ -1,3 +1,5 @@
+#include "cpp.h"
+
 namespace {
 thread_local int g_tls_var = 19;
 thread_local int g_tls_var2 = 120;
@@ -17,4 +19,15 @@ extern "C" {
     g_tls_bss2 += 3;
     return x + g_tls_var + g_tls_var2 + g_tls_bss + g_tls_bss2;
   }
+}
+
+class BaseImpl : public Base {
+public:
+    int vf() override {
+        return 1234;
+    }
+};
+
+Base* MakeBase() {
+    new BaseImpl();
 }
