@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <elf.h>
 #include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,11 +32,20 @@
 # define R_64 R_X86_64_64
 # define R_PC32 R_X86_64_PC32
 # define R_PLT32 R_X86_64_PLT32
+# define R_RELATIVE R_X86_64_RELATIVE
+# define R_GLOB_DAT R_X86_64_GLOB_DAT
+# define R_JUMP_SLOT R_X86_64_JUMP_SLOT
+# define DYN_SUPPORTED 1
 #elif defined(__i386__)
 # define R_32 R_386_32
 # define R_PC32 R_386_PC32
 #elif defined(__arm__)
 #elif defined(__aarch64__)
+# define R_64 R_AARCH64_ABS64
+# define R_RELATIVE R_AARCH64_RELATIVE
+# define R_GLOB_DAT R_AARCH64_GLOB_DAT
+# define R_JUMP_SLOT R_AARCH64_JUMP_SLOT
+# define DYN_SUPPORTED 1
 #else
 # error "Unsupported architecture"
 #endif
@@ -382,10 +392,27 @@ static void* objsym_dyn(obj_handle* obj, const char* symbol) {
   return NULL;
 }
 
+#if DYN_SUPPORTED
+
 static void undefined() {
   LOGF("undefined function called\n");
   abort();
 }
+
+#endif
+
+#if defined(__aarch64__)
+
+typedef struct TlsDesc {
+  ptrdiff_t (*entry)(struct TlsDesc*);
+  void* arg;
+} TlsDesc;
+
+static ptrdiff_t return_tls(struct TlsDesc* desc) {
+  return (ptrdiff_t)desc->arg;
+}
+
+#endif
 
 static void relocate_dyn(const char* reloc_type, obj_handle* obj,
                          Elf_Rel* rel, int relsz) {
@@ -431,8 +458,9 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
     }
 #endif
 
-    case R_X86_64_GLOB_DAT:
-    case R_X86_64_JUMP_SLOT: {
+#if DYN_SUPPORTED
+    case R_GLOB_DAT:
+    case R_JUMP_SLOT: {
       if (val) {
         *addr = val;
       } else {
@@ -441,12 +469,12 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
       break;
     }
 
-    case R_X86_64_RELATIVE: {
+    case R_RELATIVE: {
       *addr = (void*)(*(char**)addr + (intptr_t)obj->base);
       break;
     }
 
-    case R_X86_64_64: {
+    case R_64: {
 #if __SIZEOF_POINTER__ == 8
       *addr = (void*)((char*)val + rel->r_addend);
 #else
@@ -454,6 +482,7 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
 #endif
       break;
     }
+#endif
 
     case R_X86_64_DTPMOD64: {
       // TODO(hamaji): Retrive the right module ID.
@@ -464,6 +493,15 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
     case R_X86_64_DTPOFF64: {
       break;
     }
+
+#if defined(__aarch64__)
+    case R_AARCH64_TLSDESC: {
+      TlsDesc* desc = (TlsDesc*)addr;
+      desc->entry = &return_tls;
+      desc->arg = (void*)(g_objfcn_tls + sym->st_value + rel->r_addend - (intptr_t)__builtin_thread_pointer());
+      break;
+    }
+#endif
 
     default:
       LOGF("Unsupported reloc: %d\n", type);
@@ -581,16 +619,17 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
     relocate_dyn("rel", obj, rel, relsz);
     relocate_dyn("pltrel", obj, rel + relsz / sizeof(*rel), pltrelsz);
 
+#if defined(__arm__)
+    __builtin___clear_cache(obj->code, obj->code + obj->code_size);
+#endif
+
     if (init_array) {
       for (size_t i = 0; i < init_arraysz / sizeof(void*); i++) {
+        LOGF("calling init_array: %p\n", init_array[i]);
         ((void(*)())(init_array[i]))();
       }
     }
   }
-
-#if defined(__arm__)
-  __builtin___clear_cache(obj->code, obj->code + obj->code_size);
-#endif
   return 1;
 }
 
@@ -708,7 +747,7 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
     return 0;
   }
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__aarch64__)
   __builtin___clear_cache(obj->code, obj->code + obj->code_size);
 #endif
 

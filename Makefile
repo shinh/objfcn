@@ -45,7 +45,7 @@ test_objfcn_cpp_64: test_objfcn_cpp.cc objfcn.c
 	$(CXX) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c
 
 test_objfcn_cpp_aarch64: test_objfcn_cpp.cc objfcn.c
-	$(AARCH64_CXX) $(CFLAGS) -rdynamic -o $@ test_objfcn.c objfcn.c -ldl
+	$(AARCH64_CXX) $(CFLAGS) -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c -ldl
 
 func_64_pic.o: func.c
 	$(CC) -fPIC -c -o $@ $<

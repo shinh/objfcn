@@ -1,5 +1,7 @@
 #include "cpp.h"
 
+#include <stdio.h>
+
 namespace {
 thread_local int g_tls_var = 19;
 thread_local int g_tls_var2 = 120;
