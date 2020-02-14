@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <stdio.h>
 
+#include <string>
+
 #include "cpp.h"
 
 typedef int (*func_t)(int);
@@ -43,5 +45,9 @@ int main(int argc, char* argv[]) {
   b->vf();
 
   objclose(handle);
+
+  std::string s("done");
+  fprintf(stderr, "%s failed=%d\n", s.c_str(), failed);
+
   return failed;
 }
