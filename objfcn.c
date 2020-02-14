@@ -619,7 +619,7 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
     relocate_dyn("rel", obj, rel, relsz);
     relocate_dyn("pltrel", obj, rel + relsz / sizeof(*rel), pltrelsz);
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__aarch64__)
     __builtin___clear_cache(obj->code, obj->code + obj->code_size);
 #endif
 
