@@ -59,9 +59,9 @@
 # define Elf_Rel Elf64_Rela
 # define Elf_Rela Elf64_Rela
 # define Elf_Dyn Elf64_Dyn
-# define ELF_ST_TYPE(v) ELF64_ST_TYPE(v)
-# define ELF_R_SYM(v) ELF64_R_SYM(v)
-# define ELF_R_TYPE(v) ELF64_R_TYPE(v)
+# define ELFW_ST_TYPE(v) ELF64_ST_TYPE(v)
+# define ELFW_R_SYM(v) ELF64_R_SYM(v)
+# define ELFW_R_TYPE(v) ELF64_R_TYPE(v)
 #else
 # define Elf_Addr Elf32_Addr
 # define Elf_Ehdr Elf32_Ehdr
@@ -71,9 +71,9 @@
 # define Elf_Rel Elf32_Rel
 # define Elf_Rela Elf32_Rela
 # define Elf_Dyn Elf32_Dyn
-# define ELF_ST_TYPE(v) ELF32_ST_TYPE(v)
-# define ELF_R_SYM(v) ELF32_R_SYM(v)
-# define ELF_R_TYPE(v) ELF32_R_TYPE(v)
+# define ELFW_ST_TYPE(v) ELF32_ST_TYPE(v)
+# define ELFW_R_SYM(v) ELF32_R_SYM(v)
+# define ELFW_R_TYPE(v) ELF32_R_TYPE(v)
 #endif
 
 __thread char g_objfcn_tls[OBJFCN_TLS_SIZE];
@@ -216,7 +216,11 @@ error:
 }
 
 static int should_load(Elf_Shdr* shdr) {
+#ifdef SHT_ARM_EXIDX
   return shdr->sh_flags & SHF_ALLOC && shdr->sh_type != SHT_ARM_EXIDX;
+#else
+  return shdr->sh_flags & SHF_ALLOC;
+#endif
 }
 
 static size_t relocate(obj_handle* obj,
@@ -243,12 +247,12 @@ static size_t relocate(obj_handle* obj,
     for (int j = 0; j < relnum; j++) {
       Elf_Rela* rel = (Elf_Rela*)(bin + shdr->sh_offset + relsize * j);
       char* target = target_base + rel->r_offset;
-      Elf_Sym* sym = &symtab[ELF_R_SYM(rel->r_info)];
+      Elf_Sym* sym = &symtab[ELFW_R_SYM(rel->r_info)];
       int addend = has_addend ? rel->r_addend : 0;
       char* sym_addr = NULL;
 
       if (!code_size_only) {
-        switch (ELF_ST_TYPE(sym->st_info)) {
+        switch (ELFW_ST_TYPE(sym->st_info)) {
           case STT_SECTION:
             sym_addr = addrs[sym->st_shndx];
             break;
@@ -273,14 +277,14 @@ static size_t relocate(obj_handle* obj,
 
           default:
             sprintf(obj_error, "unsupported relocation sym %d",
-                    ELF_ST_TYPE(sym->st_info));
+                    ELFW_ST_TYPE(sym->st_info));
             return (size_t)-1;
         }
         //fprintf(stderr, "%d %s target=%p sym_addr=%p addend=%d\n",
         //        j, strtab + sym->st_name, target, sym_addr, addend);
       }
 
-      switch (ELF_R_TYPE(rel->r_info)) {
+      switch (ELFW_R_TYPE(rel->r_info)) {
 #ifdef R_32
         case R_32:
           if (!code_size_only)
@@ -361,7 +365,7 @@ static size_t relocate(obj_handle* obj,
 
         default:
           sprintf(obj_error, "Unknown reloc: %ld",
-                  (long)ELF_R_TYPE(rel->r_info));
+                  (long)ELFW_R_TYPE(rel->r_info));
           return (size_t)-1;
       }
     }
@@ -420,8 +424,8 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
   for (i = 0; i < relsz / sizeof(*rel); rel++, i++) {
     LOGF("rel offset=%x\n", (int)rel->r_offset);
     void** addr = (void**)(obj->base + rel->r_offset);
-    int type = ELF_R_TYPE(rel->r_info);
-    Elf_Sym* sym = obj->symtab + ELF_R_SYM(rel->r_info);
+    int type = ELFW_R_TYPE(rel->r_info);
+    Elf_Sym* sym = obj->symtab + ELFW_R_SYM(rel->r_info);
     const char* sname = obj->strtab + sym->st_name;
     void* val = 0;
 
@@ -721,16 +725,16 @@ static int load_object(obj_handle* obj, const char* bin, const char* filename) {
 
   for (int i = 0; i < symnum; i++) {
     Elf_Sym* sym = &symtab[i];
-    if (ELF_ST_TYPE(sym->st_info) == STT_OBJECT ||
-        ELF_ST_TYPE(sym->st_info) == STT_FUNC) {
+    if (ELFW_ST_TYPE(sym->st_info) == STT_OBJECT ||
+        ELFW_ST_TYPE(sym->st_info) == STT_FUNC) {
       obj->num_symbols++;
     }
   }
   obj->symbols = (symbol*)malloc(sizeof(symbol) * obj->num_symbols);
   for (int i = 0, ns = 0; i < symnum; i++) {
     Elf_Sym* sym = &symtab[i];
-    if (ELF_ST_TYPE(sym->st_info) == STT_OBJECT ||
-        ELF_ST_TYPE(sym->st_info) == STT_FUNC) {
+    if (ELFW_ST_TYPE(sym->st_info) == STT_OBJECT ||
+        ELFW_ST_TYPE(sym->st_info) == STT_FUNC) {
       const char* name = strtab + sym->st_name;
       char* addr = addrs[sym->st_shndx] + sym->st_value;
       // Write back so we can use the address later.
