@@ -33,16 +33,16 @@ ifdef ARM
 endif
 
 test_objfcn_64: test_objfcn.c objfcn.c func.c
-	$(CC) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
+	$(CC) $(CFLAGS) -rdynamic -o $@ test_objfcn.c objfcn.c -ldl
 
 test_objfcn_32: test_objfcn.c objfcn.c func.c
-	$(CC) $(CFLAGS) -m32 -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
+	$(CC) $(CFLAGS) -m32 -rdynamic -o $@ test_objfcn.c objfcn.c -ldl
 
 test_objfcn_arm32: test_objfcn.c objfcn.c func.c
-	$(CLANG) -target arm-linux-gnueabi $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn.c objfcn.c
+	$(CLANG) -target arm-linux-gnueabi $(CFLAGS) -rdynamic -o $@ test_objfcn.c objfcn.c -ldl
 
 test_objfcn_cpp_64: test_objfcn_cpp.cc objfcn.c
-	$(CXX) $(CFLAGS) -ldl -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c
+	$(CXX) $(CFLAGS) -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c -ldl
 
 test_objfcn_cpp_aarch64: test_objfcn_cpp.cc objfcn.c
 	$(AARCH64_CXX) $(CFLAGS) -rdynamic -o $@ test_objfcn_cpp.cc objfcn.c -ldl
