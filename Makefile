@@ -69,3 +69,6 @@ cpp_aarch64.so: cpp.cc
 	$(AARCH64_CXX) -fPIC -shared -o $@ $<
 
 -include *.d
+
+clean:
+	rm -f $(TEST_BINARIES) *.o *.so
