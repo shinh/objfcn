@@ -85,6 +85,31 @@ typedef struct {
 
 typedef struct {
   uint32_t nbuckets;
+  uint32_t nchain;
+  uint8_t tail[1];
+} Elf_Hash;
+
+static uint32_t* elf_hash_buckets(Elf_Hash* hash) {
+  return (uint32_t*)(hash->tail);
+}
+
+static uint32_t* elf_hash_chains(Elf_Hash* hash) {
+  return (uint32_t*)(&elf_hash_buckets(hash)[hash->nbuckets]);
+}
+
+static uint32_t elf_hash_calc(const char* p) {
+  uint32_t h = 0, g;
+  while (*p) {
+    h = (h << 4) + (unsigned char)*p++;
+    g = h & 0xf0000000;
+    h ^= g;
+    h ^= g >> 24;
+  }
+  return h;
+}
+
+typedef struct {
+  uint32_t nbuckets;
   uint32_t symndx;
   uint32_t maskwords;
   uint32_t shift2;
@@ -122,6 +147,7 @@ typedef struct {
   char* base;
   const char* strtab;
   Elf_Sym* symtab;
+  Elf_Hash* elf_hash;
   Elf_GnuHash* gnu_hash;
 } obj_handle;
 
@@ -373,9 +399,23 @@ static size_t relocate(obj_handle* obj,
   return code_size;
 }
 
-static void* objsym_dyn(obj_handle* obj, const char* symbol) {
-  assert(obj->symtab);
-  // TODO(hamaji): Support DT_HASH.
+static void* objsym_dyn_elf_hash(obj_handle* obj, const char* symbol) {
+  assert(obj->elf_hash);
+  Elf_Hash* elf_hash = obj->elf_hash;
+
+  uint32_t h = elf_hash_calc(symbol);
+  uint32_t n = elf_hash_buckets(elf_hash)[h % elf_hash->nbuckets];
+  for (; n; n = elf_hash_chains(elf_hash)[n]) {
+    Elf_Sym* sym = &obj->symtab[n];
+
+    if (!strcmp(symbol, obj->strtab + sym->st_name)) {
+      return obj->base + sym->st_value;
+    }
+  }
+  return NULL;
+}
+
+static void* objsym_dyn_gnu_hash(obj_handle* obj, const char* symbol) {
   assert(obj->gnu_hash);
   Elf_GnuHash* gnu_hash = obj->gnu_hash;
 
@@ -394,6 +434,15 @@ static void* objsym_dyn(obj_handle* obj, const char* symbol) {
     if (h2 & 1) break;
   }
   return NULL;
+}
+
+static void* objsym_dyn(obj_handle* obj, const char* symbol) {
+  assert(obj->symtab);
+  if (obj->gnu_hash) {
+    return objsym_dyn_gnu_hash(obj, symbol);
+  } else {
+    return objsym_dyn_elf_hash(obj, symbol);
+  }
 }
 
 #if DYN_SUPPORTED
@@ -578,6 +627,10 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
 
       case DT_SYMTAB:
         obj->symtab = (Elf_Sym*)(code + dyn->d_un.d_ptr);
+        break;
+
+      case DT_HASH:
+        obj->elf_hash = (Elf_Hash*)(code + dyn->d_un.d_ptr);
         break;
 
       case DT_GNU_HASH:
