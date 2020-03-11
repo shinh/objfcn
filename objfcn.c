@@ -59,6 +59,7 @@
 # define Elf_Rel Elf64_Rela
 # define Elf_Rela Elf64_Rela
 # define Elf_Dyn Elf64_Dyn
+# define ELFW_ST_BIND(v) ELF64_ST_BIND(v)
 # define ELFW_ST_TYPE(v) ELF64_ST_TYPE(v)
 # define ELFW_R_SYM(v) ELF64_R_SYM(v)
 # define ELFW_R_TYPE(v) ELF64_R_TYPE(v)
@@ -71,6 +72,7 @@
 # define Elf_Rel Elf32_Rel
 # define Elf_Rela Elf32_Rela
 # define Elf_Dyn Elf32_Dyn
+# define ELFW_ST_BIND(v) ELF32_ST_BIND(v)
 # define ELFW_ST_TYPE(v) ELF32_ST_TYPE(v)
 # define ELFW_R_SYM(v) ELF32_R_SYM(v)
 # define ELFW_R_TYPE(v) ELF32_R_TYPE(v)
@@ -399,6 +401,12 @@ static size_t relocate(obj_handle* obj,
   return code_size;
 }
 
+static int is_defined(Elf_Sym* sym) {
+  int bind = ELFW_ST_BIND(sym->st_info);
+  return ((bind == STB_GLOBAL || bind == STB_WEAK) &&
+          sym->st_shndx != SHN_UNDEF);
+}
+
 static void* objsym_dyn_elf_hash(obj_handle* obj, const char* symbol) {
   assert(obj->elf_hash);
   Elf_Hash* elf_hash = obj->elf_hash;
@@ -408,7 +416,7 @@ static void* objsym_dyn_elf_hash(obj_handle* obj, const char* symbol) {
   for (; n; n = elf_hash_chains(elf_hash)[n]) {
     Elf_Sym* sym = &obj->symtab[n];
 
-    if (!strcmp(symbol, obj->strtab + sym->st_name)) {
+    if (!strcmp(symbol, obj->strtab + sym->st_name) && is_defined(sym)) {
       return obj->base + sym->st_value;
     }
   }
@@ -428,7 +436,8 @@ static void* objsym_dyn_gnu_hash(obj_handle* obj, const char* symbol) {
   for (Elf_Sym* sym = &obj->symtab[n];; ++sym) {
     uint32_t h2 = *hv++;
     if ((h & ~1) == (h2 & ~1) &&
-        !strcmp(symbol, obj->strtab + sym->st_name)) {
+        !strcmp(symbol, obj->strtab + sym->st_name) &&
+        is_defined(sym)) {
       return obj->base + sym->st_value;
     }
     if (h2 & 1) break;
