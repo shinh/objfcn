@@ -594,6 +594,7 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
   align_code(obj, 4096);
 
   obj->base = code;
+  obj->code_size = max_addr;
   obj->is_dyn = 1;
 
   for (int i = 0; i < ehdr->e_phnum; i++) {
@@ -686,7 +687,7 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
     relocate_dyn("pltrel", obj, rel + relsz / sizeof(*rel), pltrelsz);
 
 #if defined(__arm__) || defined(__aarch64__)
-    __builtin___clear_cache(obj->code, obj->code + obj->code_size);
+    __builtin___clear_cache(obj->base, obj->base + obj->code_size);
 #endif
 
     if (init_array) {
