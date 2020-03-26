@@ -59,6 +59,9 @@
 # define Elf_Rel Elf64_Rela
 # define Elf_Rela Elf64_Rela
 # define Elf_Dyn Elf64_Dyn
+# define Elf_Versym Elf64_Versym
+# define Elf_Verneed Elf64_Verneed
+# define Elf_Vernaux Elf64_Vernaux
 # define ELFW_ST_BIND(v) ELF64_ST_BIND(v)
 # define ELFW_ST_TYPE(v) ELF64_ST_TYPE(v)
 # define ELFW_R_SYM(v) ELF64_R_SYM(v)
@@ -72,6 +75,9 @@
 # define Elf_Rel Elf32_Rel
 # define Elf_Rela Elf32_Rela
 # define Elf_Dyn Elf32_Dyn
+# define Elf_Versym Elf32_Versym
+# define Elf_Verneed Elf32_Verneed
+# define Elf_Vernaux Elf32_Vernaux
 # define ELFW_ST_BIND(v) ELF32_ST_BIND(v)
 # define ELFW_ST_TYPE(v) ELF32_ST_TYPE(v)
 # define ELFW_R_SYM(v) ELF32_R_SYM(v)
@@ -151,6 +157,9 @@ typedef struct {
   Elf_Sym* symtab;
   Elf_Hash* elf_hash;
   Elf_GnuHash* gnu_hash;
+  Elf_Versym* versym;
+  Elf_Verneed* verneed;
+  const char** verstrs;  // indexed by versym
 } obj_handle;
 
 static char obj_error[256];
@@ -483,13 +492,24 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
     LOGF("rel offset=%x\n", (int)rel->r_offset);
     void** addr = (void**)(obj->base + rel->r_offset);
     int type = ELFW_R_TYPE(rel->r_info);
-    Elf_Sym* sym = obj->symtab + ELFW_R_SYM(rel->r_info);
+    int sym_idx = ELFW_R_SYM(rel->r_info);
+    Elf_Sym* sym = obj->symtab + sym_idx;
     const char* sname = obj->strtab + sym->st_name;
     void* val = 0;
 
     val = objsym_dyn(obj, sname);
-    if (!val)
-      val = dlsym(RTLD_DEFAULT, sname);
+    if (!val) {
+      const char* verstr = 0;
+      if (obj->versym && obj->verneed) {
+        int ver = obj->versym[sym_idx];
+        verstr = obj->verstrs[ver];
+      }
+      if (verstr) {
+        val = dlvsym(RTLD_DEFAULT, sname, verstr);
+      } else {
+        val = dlsym(RTLD_DEFAULT, sname);
+      }
+    }
 
     LOGF("%s: %p %s(%p) %d => %p\n",
          reloc_type, (void*)addr, sname, sym, type, val);
@@ -575,6 +595,35 @@ static void relocate_dyn(const char* reloc_type, obj_handle* obj,
   }
 }
 
+static void parse_version(obj_handle* obj, int verneed_num) {
+  int num_verstrs = 2;
+  obj->verstrs = (const char**)calloc(num_verstrs, sizeof(char*));
+
+  Elf_Verneed* vn = obj->verneed;
+  for (int i = 0; i < verneed_num; ++i) {
+    LOGF("VERNEED: ver=%d cnt=%d file=%s aux=%d next=%d\n",
+         vn->vn_version, vn->vn_cnt, obj->strtab + vn->vn_file,
+         vn->vn_aux, vn->vn_next);
+    Elf_Vernaux* vna = (Elf_Vernaux*)((char*)vn + vn->vn_aux);
+    for (int j = 0; j < vn->vn_cnt; ++j) {
+      LOGF(" VERNAUX: hash=%d flags=%d other=%d name=%s next=%d\n",
+           vna->vna_hash, vna->vna_flags, vna->vna_other,
+           obj->strtab + vna->vna_name, vna->vna_next);
+
+      int ver = vna->vna_other;
+      if (num_verstrs <= ver) {
+        num_verstrs = ver + 1;
+        obj->verstrs = (const char**)realloc(obj->verstrs,
+                                             sizeof(char*) * num_verstrs);
+      }
+      obj->verstrs[ver] = obj->strtab + vna->vna_name;
+
+      vna = (Elf_Vernaux*)((char*)vna + vna->vna_next);
+    }
+    vn = (Elf_Verneed*)((char*)vn + vn->vn_next);
+  }
+}
+
 static int load_object_dyn(obj_handle* obj, const char* bin,
                            const char* filename) {
   Elf_Ehdr* ehdr = (Elf_Ehdr*)bin;
@@ -625,6 +674,7 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
     int relsz = 0, pltrelsz = 0;
     void** init_array = NULL;
     int init_arraysz = 0;
+    int verneed_num = 0;
     for (Elf_Dyn* dyn = dyns; dyn->d_tag; dyn++) {
       switch (dyn->d_tag) {
       case DT_NEEDED: {
@@ -679,8 +729,25 @@ static int load_object_dyn(obj_handle* obj, const char* bin,
         break;
       }
 
+      case DT_VERSYM: {
+        obj->versym = (Elf_Versym*)(code + dyn->d_un.d_ptr);
+        break;
+      }
+
+      case DT_VERNEED: {
+        obj->verneed = (Elf_Verneed*)(code + dyn->d_un.d_ptr);
+        break;
+      }
+
+      case DT_VERNEEDNUM: {
+        verneed_num = dyn->d_un.d_val;
+        break;
+      }
+
       }
     }
+
+    parse_version(obj, verneed_num);
 
     assert(rel);
     relocate_dyn("rel", obj, rel, relsz);
@@ -892,6 +959,7 @@ int objclose(void* handle) {
   for (int i = 0; i < obj->num_symbols; i++) {
     free(obj->symbols[i].name);
   }
+  free(obj->verstrs);
   free(obj);
   return 0;
 }
